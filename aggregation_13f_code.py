@@ -320,11 +320,13 @@ def build_combined_csv(index_df, holdings_dir, quarter_key):
                 "issuer": str(grp["nameOfIssuer"].iloc[0]),
                 "sum_weight_pct": 0.0, "num_managers": 0,
                 "max_weight_pct": 0.0, "total_value": 0.0,
+                "total_shares": 0.0,
             })
             rec["sum_weight_pct"] += w
             rec["num_managers"] += 1
             rec["max_weight_pct"] = max(rec["max_weight_pct"], w)
             rec["total_value"] += float(grp["value"].fillna(0).sum())
+            rec["total_shares"] += float(grp["shares"].fillna(0).sum())
 
         df.to_csv(out_path, mode="a", header=first_write, index=False)
         first_write = False
@@ -347,10 +349,26 @@ def build_combined_csv(index_df, holdings_dir, quarter_key):
     summed["value_weight_pct"] = (
         summed["total_value"] / summed["total_value"].sum() * 100.0
     )
+    # Ticker column, joined from the market-summary map (searched anywhere
+    # under BASE_DIR so folder reorganizations don't break it).
+    import glob as _glob
+    _cands = []
+    for _d in ["", "/*", "/*/*", "/*/*/*"]:
+        _cands += _glob.glob(
+            f"{BASE_DIR}{_d}/institutional_market_summary_*.csv")
+    tick = {}
+    if _cands:
+        _m = pd.read_csv(sorted(_cands)[-1], usecols=["cusip", "ticker"],
+                         dtype=str)
+        _m["cusip"] = _m["cusip"].str.strip().str.upper().str.lstrip("0")
+        tick = dict(zip(_m["cusip"], _m["ticker"].fillna("")))
+    summed["ticker"] = [tick.get(str(c).strip().upper().lstrip("0"), "")
+                        for c in summed["cusip"]]
+
     summed = summed.sort_values("sum_weight_pct", ascending=False)
-    summed = summed[["cusip", "issuer", "num_managers", "sum_weight_pct",
-                     "avg_weight_pct", "max_weight_pct", "total_value",
-                     "value_weight_pct"]]
+    summed = summed[["ticker", "cusip", "issuer", "num_managers",
+                     "total_shares", "total_value", "sum_weight_pct",
+                     "avg_weight_pct", "max_weight_pct", "value_weight_pct"]]
     summed_path = BASE_DIR / quarter_key / f"summed_weights_{quarter_key}.csv"
     summed.to_csv(summed_path, index=False)
     print(f"Wrote {summed_path} ({len(summed):,} securities)")
@@ -361,24 +379,129 @@ def build_combined_csv(index_df, holdings_dir, quarter_key):
  
  
 # ----------------------------------------------------------------------------
+# PART 3 — per-stock quarterly diff across ALL managers
+# ----------------------------------------------------------------------------
+
+def build_quarterly_diff(q_old, q_new, target):
+    """For one stock (9-char CUSIP, or a ticker if the ticker map is
+    available): across ALL managers, how many increased their share count
+    between the two quarters. COMMON STOCK only (options/bonds excluded).
+    Reads all_manager_holdings_<quarter>.csv — run --combined for both
+    quarters first. NOTE: loads two large CSVs; expect a minute or two."""
+    target = str(target).strip().upper()
+    if re.fullmatch(r"[0-9A-Z]{9}", target):
+        norm_targets = {target.lstrip("0")}
+    else:
+        import glob
+        cands = []
+        for depth in ["", "/*", "/*/*", "/*/*/*"]:
+            cands += glob.glob(
+                f"{BASE_DIR}{depth}/institutional_market_summary_*.csv")
+        if not cands:
+            sys.exit("ERROR: ticker lookup needs an "
+                     "institutional_market_summary_*.csv map — pass a "
+                     "9-character CUSIP instead.")
+        m = pd.read_csv(sorted(cands)[-1], usecols=["cusip", "ticker"],
+                        dtype=str)
+        hits = m.loc[m["ticker"].fillna("").str.strip().str.upper() == target,
+                     "cusip"]
+        norm_targets = {c.strip().upper().lstrip("0") for c in hits}
+        if not norm_targets:
+            sys.exit(f"ERROR: ticker {target!r} not found in the ticker map "
+                     f"— pass the 9-character CUSIP instead.")
+
+    def load_stock(q):
+        path = BASE_DIR / q / f"all_manager_holdings_{q}.csv"
+        if not path.exists():
+            sys.exit(f"ERROR: {path} not found.\nRun: aggregation_13f_code.py "
+                     f"--quarter {q} --combined first.")
+        print(f"  scanning {path.name} ...")
+        df = pd.read_csv(path, low_memory=False, dtype={"cusip": str})
+        cus = (df["cusip"].fillna("").astype(str).str.strip().str.upper()
+               .str.lstrip("0"))
+        df = df[cus.isin(norm_targets)]
+        # common stock only — same rules as everywhere else in the pipeline
+        if "putCall" in df.columns:
+            df = df[df["putCall"].fillna("").astype(str).str.strip() == ""]
+        if "sshPrnamtType" in df.columns:
+            df = df[df["sshPrnamtType"].fillna("SH").astype(str)
+                    .str.strip().str.upper() == "SH"]
+        # one row per manager (sums subsidiary/voting-authority splits)
+        return df.groupby("cik").agg(manager_name=("manager_name", "first"),
+                                     shares=("shares", "sum"),
+                                     value=("value", "sum"))
+
+    old, new = load_stock(q_old), load_stock(q_new)
+    merged = old.join(new, lsuffix="_old", rsuffix="_new", how="outer")
+    merged["manager_name"] = (merged["manager_name_new"]
+                              .fillna(merged["manager_name_old"]))
+    merged = merged.drop(columns=["manager_name_old", "manager_name_new"])
+    for c in ["shares_old", "value_old", "shares_new", "value_new"]:
+        merged[c] = merged[c].fillna(0)
+    merged["share_change"] = merged["shares_new"] - merged["shares_old"]
+    merged["value_change"] = merged["value_new"] - merged["value_old"]
+    # stamp the STOCK's identity on every row (rows are managers)
+    merged.insert(0, "ticker", target if not re.fullmatch(r"[0-9A-Z]{9}",
+                                                          target) else "")
+    merged.insert(1, "cusip", ";".join(sorted(norm_targets)))
+
+    total = len(merged)
+    pos = int((merged["share_change"] > 0).sum())
+    neg = int((merged["share_change"] < 0).sum())
+    flat = total - pos - neg
+    print(f"\n--- {target}: {q_old} -> {q_new} (common stock only) ---")
+    print(f"Managers involved:            {total:,}")
+    print(f"POSITIVE (bought/increased):  {pos:,}  "
+          f"({pos / total * 100:.1f}%)" if total else "no managers found")
+    print(f"NEGATIVE (sold/decreased):    {neg:,}  ({neg / total * 100:.1f}%)")
+    print(f"UNCHANGED:                    {flat:,}  ({flat / total * 100:.1f}%)")
+    print(f"Total value: ${merged['value_old'].sum():,.0f} -> "
+          f"${merged['value_new'].sum():,.0f}  "
+          f"(chg ${merged['value_change'].sum():,.0f})")
+
+    out_path = BASE_DIR / f"stock_diff_{target}_{q_old}_to_{q_new}.csv"
+    out = merged.reset_index().rename(columns={"cik": "manager_cik"})
+    out = out[["ticker", "cusip", "manager_cik", "manager_name",
+               "shares_old", "shares_new", "share_change",
+               "value_old", "value_new", "value_change"]]
+    out.sort_values("share_change", key=abs,
+                    ascending=False).to_csv(out_path, index=False)
+    print(f"Wrote per-manager detail -> {out_path}")
+
+
+# ----------------------------------------------------------------------------
 # Orchestration
 # ----------------------------------------------------------------------------
- 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Aggregate a quarter's per-manager 13F holdings: "
                     "classify manager types, optionally rebuild the "
                     "combined all-holdings CSV.")
-    parser.add_argument("--quarter", required=True,
+    parser.add_argument("--quarter",
                         help="Quarter to aggregate, e.g. 2026q1 — must match "
                              "an existing holdings_by_manager_<quarter>/ "
                              "folder produced by download_13f.py.")
+    parser.add_argument("--diff-from", dest="diff_from",
+                        help="Per-stock diff mode: older quarter, e.g. 2025q4.")
+    parser.add_argument("--diff-to", dest="diff_to",
+                        help="Per-stock diff mode: newer quarter, e.g. 2026q1.")
+    parser.add_argument("--target-stock", dest="target_stock", default="AAPL",
+                        help="Ticker or 9-char CUSIP for the per-stock diff "
+                             "(default AAPL).")
     parser.add_argument("--combined", action="store_true",
                         help="Also write all_manager_holdings_<quarter>.csv "
                              "(~300-400MB) by concatenating the per-manager "
                              "files. Off by default.")
     args = parser.parse_args()
- 
+
+    # Per-stock diff mode: --diff-from/--diff-to (and optional --target-stock)
+    if args.diff_from and args.diff_to:
+        build_quarterly_diff(args.diff_from, args.diff_to, args.target_stock)
+        return
+    if not args.quarter:
+        parser.error("--quarter is required (or use --diff-from/--diff-to)")
+
     # Per-quarter layout: everything for one quarter lives in
     # BASE_DIR/<quarter>/ (e.g. Ownership-13F/2025q4/).
     holdings_dir = BASE_DIR / args.quarter / f"holdings_by_manager_{args.quarter}"

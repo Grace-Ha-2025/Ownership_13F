@@ -65,6 +65,9 @@ def load_manager(quarter, filename):
     df = df[~df["titleOfClass"].fillna("").astype(str).str.upper()
             .str.contains(r"\bNOTES?\b|\bBONDS?\b|DEBENTURE|\d+\.\d+%",
                           regex=True)]
+
+    df["cusip"] = df["cusip"].str.strip().str.upper()
+    
     g = df.groupby("cusip").agg(name=("nameOfIssuer", "first"),
                                 share_class=("titleOfClass", "first"),
                                 shares=("shares", "sum"),
@@ -123,6 +126,10 @@ def main():
                            "value_chg", f"shares_{args.q_from}",
                            f"shares_{args.q_to}", "shares_chg"])
 
+    # Per-STOCK sentiment accumulator: for each cusip, how many managers
+    # bought/sold/held between the two quarters.
+    stock_stats = {}
+
     for i, cik in enumerate(all_ciks, 1):
         name_old, file_old = idx_old.get(cik, (None, None))
         name_new, file_new = idx_new.get(cik, (None, None))
@@ -153,6 +160,22 @@ def main():
             act = action(row.shares_old, row.shares_new,
                          row.value_old, row.value_new)
             counts[act] += 1
+            ss = stock_stats.setdefault(row.Index, {
+                "name": row.name, "NEW": 0, "ADDED": 0, "TRIMMED": 0,
+                "EXITED": 0, "UNCHANGED": 0,
+                "shares_bought": 0, "shares_sold": 0,
+                "value_bought": 0, "value_sold": 0})
+            ss[act] += 1
+            s_chg = row.shares_new - row.shares_old
+            v_chg = row.value_new - row.value_old
+            if s_chg > 0:
+                ss["shares_bought"] += s_chg
+            elif s_chg < 0:
+                ss["shares_sold"] += -s_chg
+            if v_chg > 0:
+                ss["value_bought"] += v_chg
+            elif v_chg < 0:
+                ss["value_sold"] += -v_chg
             if detail_w is not None and act != "UNCHANGED":
                 detail_w.writerow([cik, manager_name, row.Index, row.name,
                                    row.share_class, act,
@@ -177,6 +200,46 @@ def main():
     print()
     summary_f.close()
     print(f"Wrote {summary_path}")
+
+    # ---- per-stock sentiment: % of involved managers who were net buyers ----
+    # ticker map (searched anywhere under BASE_DIR, newest quarter wins)
+    import glob
+    tick = {}
+    cands = []
+    for d in ["", "/*", "/*/*", "/*/*/*"]:
+        cands += glob.glob(f"{BASE_DIR}{d}/institutional_market_summary_*.csv")
+    if cands:
+        m = pd.read_csv(sorted(cands)[-1], usecols=["cusip", "ticker"],
+                        dtype=str)
+        m["cusip"] = m["cusip"].str.strip().str.upper().str.lstrip("0")
+        tick = dict(zip(m["cusip"], m["ticker"].fillna("")))
+
+    sentiment_path = (BASE_DIR /
+                      f"stock_sentiment_{args.q_from}_to_{args.q_to}.csv")
+    with open(sentiment_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["ticker", "pct_bought", "pct_sold", "net_share_chg",
+                    "name", "cusip", "shares_bought", "shares_sold",
+                    "value_bought", "value_sold", "net_value_chg",
+                    "n_managers", "buyers", "sellers", "unchanged"])
+        rows = []
+        for cusip, s in stock_stats.items():
+            buyers = s["NEW"] + s["ADDED"]
+            sellers = s["TRIMMED"] + s["EXITED"]
+            total = buyers + sellers + s["UNCHANGED"]
+            rows.append([tick.get(str(cusip).strip().upper().lstrip("0"), ""),
+                         round(buyers / total * 100, 1) if total else 0,
+                         round(sellers / total * 100, 1) if total else 0,
+                         int(s["shares_bought"] - s["shares_sold"]),
+                         s["name"], cusip,
+                         int(s["shares_bought"]), int(s["shares_sold"]),
+                         int(s["value_bought"]), int(s["value_sold"]),
+                         int(s["value_bought"] - s["value_sold"]),
+                         total, buyers, sellers, s["UNCHANGED"]])
+        rows.sort(key=lambda r: r[11], reverse=True)
+        w.writerows(rows)
+    print(f"Wrote {sentiment_path} ({len(rows):,} stocks) — per-stock: "
+          f"how many managers bought vs sold, and % net buyers")
     if detail_w is not None:
         detail_f.close()
         print(f"Wrote {detail_path}")
