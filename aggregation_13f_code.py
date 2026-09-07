@@ -50,8 +50,7 @@ REQUIREMENTS
  
 USAGE
 -----
-    python3 aggregate_13f.py --quarter 2026q1
-    python3 aggregate_13f.py --quarter 2026q1 --combined
+    !/opt/anaconda3/bin/python3 aggregation_13f_code.py --quarter [yr&q] --combined
 """
  
 import argparse
@@ -349,23 +348,26 @@ def build_combined_csv(index_df, holdings_dir, quarter_key):
     summed["value_weight_pct"] = (
         summed["total_value"] / summed["total_value"].sum() * 100.0
     )
-    # Ticker column, joined from the market-summary map (searched anywhere
-    # under BASE_DIR so folder reorganizations don't break it).
-    import glob as _glob
-    _cands = []
-    for _d in ["", "/*", "/*/*", "/*/*/*"]:
-        _cands += _glob.glob(
-            f"{BASE_DIR}{_d}/institutional_market_summary_*.csv")
-    tick = {}
-    if _cands:
-        _m = pd.read_csv(sorted(_cands)[-1], usecols=["cusip", "ticker"],
-                         dtype=str)
-        _m["cusip"] = _m["cusip"].str.strip().str.upper().str.lstrip("0")
-        tick = dict(zip(_m["cusip"], _m["ticker"].fillna("")))
-    summed["ticker"] = [tick.get(str(c).strip().upper().lstrip("0"), "")
-                        for c in summed["cusip"]]
+    
+    summed["value_weight_pct"] = (
+        summed["total_value"] / summed["total_value"].sum() * 100.0
+    )
 
-    summed = summed.sort_values("sum_weight_pct", ascending=False)
+    # Ticker column, joined from your cusip/ticker mapping CSV.
+    TICKER_MAP_PATH = BASE_DIR.parent / "Ownership_13F" / "cusip_ticker_type_mapping.csv"
+    tick = {}
+    if TICKER_MAP_PATH.exists():
+        tick_df = pd.read_csv(TICKER_MAP_PATH, dtype={"cusip": str})
+        tick = {
+            str(k).strip().upper(): str(v)
+            for k, v in zip(tick_df["cusip"], tick_df["ticker_y"])
+        }
+    else:
+        print(f"  WARNING: ticker map not found at {TICKER_MAP_PATH} — "
+              f"ticker column will be blank.")
+    summed["ticker"] = [
+        tick.get(str(c).strip().upper(), "") for c in summed["cusip"]
+    ]
     summed = summed[["ticker", "cusip", "issuer", "num_managers",
                      "total_shares", "total_value", "sum_weight_pct",
                      "avg_weight_pct", "max_weight_pct", "value_weight_pct"]]
@@ -523,6 +525,19 @@ def main():
         print("\n(--combined not set: skipping the all_manager_holdings CSV. "
               "Re-run with --combined if you need the single large file.)")
  
+    
+    # Run this cell immediately after your aggregation finishes!
+    summed_path = BASE_DIR / args.quarter / f"summed_weights_{args.quarter}.csv"
+    df = pd.read_csv(summed_path)
+
+    # Calculate your institutional sentiment/conviction score
+    df["institutional_sentiment_score"] = df["sum_weight_pct"] * df["num_managers"]
+    df = df.sort_values("institutional_sentiment_score", ascending=False)
+
+    # Export the final sentiment file
+    sentiment_path = BASE_DIR / args.quarter / f"stock_sentiment_{args.quarter}.csv"
+    df.to_csv(sentiment_path, index=False)
+    print(f"Wrote stock sentiment file -> {sentiment_path}")
  
 if __name__ == "__main__":
     main()

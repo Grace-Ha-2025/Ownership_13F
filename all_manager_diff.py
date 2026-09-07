@@ -209,10 +209,12 @@ def main():
     for d in ["", "/*", "/*/*", "/*/*/*"]:
         cands += glob.glob(f"{BASE_DIR}{d}/institutional_market_summary_*.csv")
     if cands:
-        m = pd.read_csv(sorted(cands)[-1], usecols=["cusip", "ticker"],
-                        dtype=str)
-        m["cusip"] = m["cusip"].str.strip().str.upper().str.lstrip("0")
-        tick = dict(zip(m["cusip"], m["ticker"].fillna("")))
+        m = pd.read_csv(sorted(cands)[-1], usecols=["cusip", "ticker"], dtype=str)
+        m["cusip"] = m["cusip"].str.strip().str.upper()
+        m = m[m["cusip"].str.len() == 9]          # make sure it's a full, well-formed CUSIP first
+        m = m[m["cusip"].str[6] != "9"]           # check the real 7th character BEFORE stripping
+        m["cusip"] = m["cusip"].str.lstrip("0")   # now strip zeros, just for the join key
+        tick = dict(zip(m["cusip"], m["tickerok"].fillna("")))
 
     sentiment_path = (BASE_DIR /
                       f"stock_sentiment_{args.q_from}_to_{args.q_to}.csv")
