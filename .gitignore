@@ -1,0 +1,5 @@
+.DS_Store
+
+# Raw/bulk pipeline data — regenerable via pipeline/download_13f.py,
+# not source of truth. Too large to track in git.
+data/
