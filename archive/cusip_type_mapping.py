@@ -4,6 +4,13 @@
 Created on Thu Jul  9 21:25:02 2026
 @author: graceha
 """
+# ARCHIVED — NOT RUNNABLE AS-IS: past line 40 this references `sentiment_path`,
+# `class_df`, and `tick_map_df`, none of which are defined in this file (they
+# only exist in the untitled3.py / manager_mapping.py sessions this was
+# pasted from). It will raise NameError if executed past the cusip_type_map
+# build. Kept as a historical record of the exploration; the working version
+# of this idea is archive/untitled3.py, and the ticker join it was building
+# toward is now done inline by pipeline/aggregate_13f.py.
 import pandas as pd
 from pathlib import Path
 from collections import Counter

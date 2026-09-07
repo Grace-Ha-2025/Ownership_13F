@@ -6,6 +6,9 @@ for 2025q4. Self-contained (includes ticker map setup, boundary, and the
 name-formatting helper). Managers with fewer than 10 total positions are
 excluded (filters out shell/single-holding filers, e.g. 100% weight rows).
 """
+# ARCHIVED: superseded by analysis/portfolio_weight_2025q4.py, which is
+# identical except it also adds an explicit `rank` column to the output.
+# Kept only for history — no functional difference otherwise.
 from pathlib import Path
 import pandas as pd
 

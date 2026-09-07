@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# ARCHIVED — despite the filename, this is not a cusip/ticker mapping script:
+# it's a single-manager (hardcoded CIK 9015) buy/sell diff between 2025q4 and
+# 2026q1. It's the prototype that analysis/manager_buysell.py generalized to
+# every manager via --curr/--prior args. Kept for reference only.
 from pathlib import Path
 import pandas as pd
 
