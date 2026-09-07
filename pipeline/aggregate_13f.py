@@ -348,7 +348,9 @@ def build_combined_csv(index_df, holdings_dir, quarter_key):
     summed["value_weight_pct"] = (
         summed["total_value"] / summed["total_value"].sum() * 100.0
     )
-    
+    # NOTE: recomputed a second time below — harmless (same result, same
+    # column) but redundant; left in place rather than risk breaking the
+    # column ordering downstream. Safe to delete either block.
     summed["value_weight_pct"] = (
         summed["total_value"] / summed["total_value"].sum() * 100.0
     )
@@ -525,8 +527,9 @@ def main():
         print("\n(--combined not set: skipping the all_manager_holdings CSV. "
               "Re-run with --combined if you need the single large file.)")
  
-    
-    # Run this cell immediately after your aggregation finishes!
+
+    # Final step, chained automatically (no separate command needed): derive
+    # the sentiment score from the summed-weights file just written above.
     summed_path = BASE_DIR / args.quarter / f"summed_weights_{args.quarter}.csv"
     df = pd.read_csv(summed_path)
 

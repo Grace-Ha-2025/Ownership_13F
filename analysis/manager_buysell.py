@@ -127,6 +127,12 @@ def main():
         diff["shares_bought"] = shares_diff.clip(lower=0)
         diff["shares_sold"] = (-shares_diff).clip(lower=0)
 
+        # 13F data has no per-share price, so back it out from value/shares.
+        # For a brand-new position shares_prior is 0 (price_prior undefined),
+        # and for a fully exited position shares_curr is 0 (price_curr
+        # undefined) — in each case fall back to the other quarter's implied
+        # price so the added/removed shares still get valued at *some* price
+        # rather than $0.
         price_curr = (diff["value_curr"] / diff["shares_curr"]).replace([float("inf"), -float("inf")], pd.NA)
         price_prior = (diff["value_prior"] / diff["shares_prior"]).replace([float("inf"), -float("inf")], pd.NA)
 
