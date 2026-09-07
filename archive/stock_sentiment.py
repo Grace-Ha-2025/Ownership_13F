@@ -5,7 +5,11 @@ Created on Thu Jul  9 16:07:11 2026
 
 @author: graceha
 """
-
+# ARCHIVED — NON-FUNCTIONAL: the actual ticker-patching logic (the part that
+# would have modified and saved `df`) is commented out in the triple-quoted
+# block at the bottom. As written, this script loads and merges data but
+# never uses or saves the result. The ticker join it was trying to do is now
+# handled inline by pipeline/aggregate_13f.py. Kept for reference only.
 import pandas as pd
 from pathlib import Path
 

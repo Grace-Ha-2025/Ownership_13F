@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# ARCHIVED — despite the filename, this is not about mapping managers: it's
+# the all-managers buy/sell loop (hardcoded 2025q4/2026q1 paths, no CLI
+# args). Superseded by analysis/manager_buysell.py, which does the same
+# thing parameterized by --curr/--prior. Kept for reference only.
 from pathlib import Path
 import warnings
 import pandas as pd

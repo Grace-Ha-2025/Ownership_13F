@@ -1,3 +1,6 @@
+# ARCHIVED: one-off QA check, not part of any pipeline step. Verifies the
+# arithmetic in a stock_sentiment CSV (buyers+sellers+unchanged == n_managers)
+# produced by the old all_manager_diff.py run. Kept for reference only.
 import pandas as pd
 
 # Load the file
